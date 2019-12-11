@@ -2,20 +2,16 @@ import numpy as np
 import pandas as pd
 import networkx as nx
 import osmnx as ox
-import shapely
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-import matplotlib.patches as patches
-import matplotlib.collections as collections
 from IPython.display import HTML
-import queue
 from shapely.geometry import Point, LineString
 import math
 import time
 
 plt.rcParams['animation.writer'] = 'ffmpeg'
 MAX_DENSITY = 7  #7 people per m for the road
-MAX_CAPACITY = 5
+
 # define personal speed by age, need to be improved
 
 
@@ -29,7 +25,7 @@ def get_death_rate(crowd_index):
 def get_speed(speed, crowd_index):
     """
 
-
+    speed is influenced by crowd index
     :param speed: float
     :param crowd_index: float
     :return: the true speed affected by crowds: float
@@ -137,11 +133,10 @@ class Road:
 
 
 class Refuge:
-    def __init__(self, graph, rid, rnode, road=None, capacity=MAX_CAPACITY, arrive_list=None):
+    def __init__(self, graph, rid, rnode, road=None, arrive_list=None):
         self.graph = graph
         self.rid = rid
         self.rnode = rnode
-        self.capacity = capacity
         self.road = road
         if arrive_list is None:
             self.arrive_list = {}
@@ -155,7 +150,6 @@ class Refuge:
         person.status = 2
         person.pos = 0
         self.arrive_list[person.pid] = person
-
 
 
 class Person:
@@ -189,13 +183,8 @@ class Person:
         if target is None:
             target = self.refuge
         if self.pnode == target.rnode:
-            if len(target.arrive_list) < target.capacity:
-                target.add_person(self)
-                return True
-            else:
-                # arrive at the refuge, but find it is full
-                return False
-
+            target.add_person(self)
+            return True
         else:
             return False
 
@@ -239,10 +228,9 @@ class Person:
         find the next road for a person.
         :return: person has a new road, or person go to the status 3 "No where to go"
         """
-        # three situations that need to find the next road
+        # two situations that need to find the next road
         # 1. on the plan way: find the next road
         # 2. the road is too crowded, find another road
-        # 3. the refuge is full, find the path to another refuge
         if self.status >= 2:
             return
         else:
@@ -287,26 +275,6 @@ class Person:
                         self.road.people[self.pid] = self
                         self.status = 1
                         return
-            # 3. the refuge is full, find another target
-            else:
-                print(self.pid)
-                print(self.targets)
-                print(self.refuge.rid)
-                if len(self.targets) == 0:
-                    self.status = 3
-                    self.stay()
-                    return
-                else:
-                    self.targets.pop(self.refuge.rid)
-                    self.refuge = None
-                    self.get_target(targets=self.targets)
-                    if self.status != 3:
-                        self.road = self.roads[(self.route[0], self.route[1],0)]
-                        self.pos = 0
-                        self.road.people[self.pid] = self
-                        self.status = 1
-                    else:
-                        self.stay()
 
     def easy_find_next(self):
         """
@@ -327,33 +295,13 @@ class Person:
                 self.pos = 0
                 self.road.people[self.pid] = self
                 self.status = 1
-            # 2. the refuge is full, find another target
-            else:
-                self.targets.pop(self.refuge.rid)
-                self.refuge = None
-                self.get_target(targets=self.targets)
-                if self.status != 3:
-                    self.road = self.roads[(self.route[0], self.route[1], 0)]
-                    self.pos = 0
-                    self.road.people[self.pid] = self
-                    self.status = 1
-                else:
-                    self.stay()
-
-    def stay(self):
-        for e in self.roads:
-            if e[0] == self.pnode:
-                self.road = self.roads[e]
-                self.pos = 0
-                self.road.fixed_list.append((self, time.time()))
-                break
 
     def xy(self):
         return self.road.geom.interpolate(self.pos).coords[0]
 
 
 class Model:
-    def __init__(self, graph, num_people, num_refuge, strategy, refuge_capacity=MAX_CAPACITY):
+    def __init__(self, graph, num_people, num_refuge, strategy):
         self.graph = graph
         self.isfinished = False
         self.strategy = strategy   # 0 or 1
@@ -373,7 +321,7 @@ class Model:
         j = 0
         # initialize people dic {id:Person()} and refuges dic {id: Refuge()}
         for r in np.random.choice(list(self.nodes.keys()), num_refuge):
-            self.refuges[j] = Refuge(self.graph, j, r, refuge_capacity)
+            self.refuges[j] = Refuge(self.graph, j, r)
             j += 1
         # assign road to refuge
         for r in self.refuges:
@@ -478,13 +426,6 @@ class Model:
             self.record(t1, csv_file)
             return HTML('<video width="800" controls><source src="%s" type="video/mp4"></video>' % filename)
 
-    def run2(self, nsteps):
-        self.find_refuge()
-        self.record()
-        for i in range(nsteps):
-            self.move()
-            self.relocate()
-            self.record()
 
 
 
