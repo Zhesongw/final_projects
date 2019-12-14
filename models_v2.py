@@ -16,7 +16,7 @@ MAX_DENSITY = 7  #7 people per m for the road
 
 
 def get_death_rate(crowd_index):
-    if crowd_index >= 3:
+    if crowd_index >= 1:
         return 0.01
     else:
         return 0
@@ -296,6 +296,14 @@ class Person:
                 self.road.people[self.pid] = self
                 self.status = 1
 
+    def stay(self):
+        for e in self.roads:
+            if e[0] == self.pnode:
+                self.road = self.roads[e]
+                self.pos = 0
+                self.road.fixed_list.append((self, time.time()))
+                break
+
     def xy(self):
         return self.road.geom.interpolate(self.pos).coords[0]
 
@@ -332,7 +340,7 @@ class Model:
                     break
 
         for p in np.random.choice(list(self.nodes.keys()), num_people):
-            self.people[i] = Person(self.graph, i, p, self.roads, self.strategy, targets=self.refuges)
+            self.people[i] = Person(self.graph, i, p, self.roads, strategy=self.strategy, targets=self.refuges)
             i += 1
 
     def find_refuge(self, people=None):
@@ -360,7 +368,7 @@ class Model:
             else:
                 person.stay()
 
-        fig, ax = ox.plot_graph_routes(self.graph, all_routes)
+        fig, ax = ox.plot_graph_routes(self.graph, all_routes, fig_height=12)
 
     def move(self, timesteps=1):
         for r in self.roads.values():
