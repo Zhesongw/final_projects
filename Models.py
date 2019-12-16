@@ -9,10 +9,10 @@ from shapely.geometry import Point, LineString
 import math
 import copy
 
-
+# default values
 plt.rcParams['animation.writer'] = 'ffmpeg'
-MAX_DENSITY = 2  # the max capacity of a 100m road is 200 person
-MAX_CAPACITY = 300  # the max capacity of a refuge
+MAX_DENSITY = 0.5  # the max capacity of a 100m road is 200 person
+MAX_CAPACITY = 1000  # the max capacity of a refuge
 
 """
 Evacuation Simulation model 
@@ -22,22 +22,84 @@ Classes Overview
 
 1. Road:
     Properties:
+    graph: the graph of the map
+    node_i: start point of the road
+    node_j: end point of the road
+    info: related information of the road
+    geom: the geometry attribute of the road
+    length: the length of the road
+    people: people in the road still evacuating
+    crowd_index: crowd index
+    fixed_list: people in the road finish evacuating, might success or not
+    refuge: refuge of the road, if it exists
     
-    Methods
+    Methods:
+    add_person(): add a person to the evacuating list
+    get_crowd_index(): get the crowd index of the road
+    move(): move forward all the people in the evacuating
+    
 2. Person:
     Properties:
+    graph: the graph map for a person
+    pid: person id
+    pnode: the node index of the person
+    roads: the roads list od the graph
+    road: the road the person currently locates
+    pos: the relative distance to the start point of the road
+    new_pos: the relative distance after moving
+    strategy: 0 fixed plan or 1 flexible plan
+    route: the plan to the refuge
+    targets: the refuge list for one person
+    speed: person's origin speed, a random number between 4 to 5
+    pref: in which crowd index that person would try to find another way
+    refuge: the target refuge
+    status: status of a person: 0 start evacuate; 1 evacuating; 2 arrived; 3 nowhere to go; 4 die because of stomping
     
-    Methods
+    Methods:
+    ifArrived(): true if successfully arrived
+    get_target(): find the nearest refuge from refuge list
+    find_next(): when at the end of the road, find the next road to the refuge, use strategy 1
+    easy_find_next(): strategy 0 of find_next()
+    stay(): stay at the current place, and finish evacuating
+    xy(): get the coordinates
+    
 
 3. Refuge:
     Properties:
+    graph: the graph of the map
+    rid: refuge id
+    rnode: the node index of the refuge
+    capcity: the max capacity of the refuge
+    road: the road the refuge locates
+    isFull: whether full or not
+    arrive_list: the people who arrive (actually dict)
     
-    Methods
+    Methods:
+    show(): get the coordinates of the refuge
+    add_person(): add person to the refuge arrive list
 
 4. Model:
     Properties:
+    graph: the graph of the map
+    isfinished: if the model is finished
+    strategy: 0 fixed plan; 1 flexible plan
+    nodes: the node list
+    edges: the edge list
+    roads: the Road list
+    people: the Person list
+    refuge: the Refuge list
     
-    Methods
+    Methods:
+    copy(): deep copy of the model
+    find_refuge(): find the nearest refuge for all the persons
+    move(): move forward all the persons
+    record(): output result of all the persons
+    cal_index(): get the crowd index for all the roads
+    assign_time(): get the time for all the persons when they finish evacuating
+    show(): show all the persons
+    show_refuge(): show all the refuges
+    run(): run the model
+    
 """
 
 
@@ -64,8 +126,10 @@ def get_speed(speed, crowd_index):
     """
     if crowd_index <= 1:
         return speed
+    elif crowd_index <= 3:
+        return math.pow(0.25, (crowd_index - 1)) * speed
     else:
-        return math.pow(0.5, (crowd_index - 1)) * speed
+        return speed/16
 
 
 def fill_phantom(g):
@@ -113,7 +177,6 @@ class Road:
         self.geom = self.info['geometry']
         self.length = self.geom.length
         self.people = {}
-        self.requests = []
         self.crowd_index = 0
         self.fixed_list = []
         self.refuge = None
@@ -256,9 +319,8 @@ class Person:
         if self.targets is None:
             self.targets = {}
         self.speed = np.random.uniform(4, 5)
-        self.pref = np.random.uniform(0.5, 2)
+        self.pref = np.random.uniform(0.5, 1)
         self.refuge = None
-        self.route = None
         self.status = 0
         # 0:'Begin_To_Evacuate' -> 1:'Evacuating' -> 2:'Arrived'
         # 3:'No_Where_To_Go' 4:'Dead_From_Stomping'
@@ -362,15 +424,21 @@ class Person:
 
                 # successfully find another path
                 if self.status != 3:
-                    other_road = self.roads[(self.route[0], self.route[1],0)]
+                    other_road = self.roads[(self.route[0], self.route[1], 0)]
                     if other_road.crowd_index < next_road.crowd_index:
-                        self.graph = g2
-                        other_road.add_person(self,0)
+                        # self.graph = g2.copy()
+                        other_road.add_person(self, 0)
                         self.status = 1
                         return
+                    else:
+                        self.route = tmp
+                        next_road.add_person(self, 0)
+                        self.status = 1
+                        return
+                # no another path
                 else:
                     self.route = tmp
-                    next_road.add_person(self,0)
+                    next_road.add_person(self, 0)
                     self.status = 1
                     return
 
@@ -402,7 +470,7 @@ class Person:
 
         # 6. Transit to Another road
         else:
-            next_road = self.roads[(self.route[0], self.route[1],0)]
+            next_road = self.roads[(self.route[0], self.route[1], 0)]
             next_road.add_person(self, 0)
             self.status = 1
 
@@ -495,7 +563,7 @@ class Model:
             person.get_target()  # find refuges and routes
             if person.refuge is not None:
                 # person is generated at the exactly place as the refuge,
-                if len(person.route) == 1:
+                if person.ifArrived():
                     person.refuge.add_person(person)
                 else:
                     road = self.roads[(person.route[0], person.route[1], 0)]
@@ -517,7 +585,7 @@ class Model:
         :return:
         """
         for r in self.roads.values():
-            r.move(timestamp=timesteps)
+            r.move(timestep=timesteps)
 
     def record(self, file):
         """
@@ -627,7 +695,7 @@ class Model:
                 frame = runFrame
             else:
                 frame = nsteps
-            anim = animation.FuncAnimation(fig, update, frames=frame, interval=100, save_count=10000)
+            anim = animation.FuncAnimation(fig, update, frames=frame, interval=100, save_count=2000)
             vid_file = filename + '.mp4'
             csv_file = filename + '.csv'
             anim.save(vid_file)
